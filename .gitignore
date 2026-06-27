@@ -1,0 +1,10 @@
+# ビルド出力（GitHub Actions 側で生成するので push 不要）
+_site/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Claude Code のローカル設定
+.claude/
