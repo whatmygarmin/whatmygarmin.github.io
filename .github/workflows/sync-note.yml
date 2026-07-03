@@ -1,0 +1,83 @@
+name: Sync from note
+
+# 毎日 6:00 JST に note を見に行き、新しい記事があれば取り込んで公開する。
+# Actions タブから手動実行（Run workflow）もできる。
+on:
+  schedule:
+    - cron: "0 21 * * *" # 21:00 UTC = 6:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: write # 取り込んだ記事を commit するため
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Import new posts from note
+        run: python fromnote.py
+        # アカウント名は fromnote.py の NOTE_USERNAME か、
+        # リポジトリの Settings → Variables の NOTE_USERNAME で指定
+        env:
+          NOTE_USERNAME: ${{ vars.NOTE_USERNAME }}
+
+      - name: Commit new posts
+        id: commit
+        run: |
+          if [ -n "$(git status --porcelain posts/)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add posts/
+            git commit -m "sync: note から自動取り込み"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "新しい記事はありませんでした"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # GITHUB_TOKEN での push は deploy.yml を起動しないので、ここでビルド＆公開まで行う
+  build-and-deploy:
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build site
+        run: python build.py
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
